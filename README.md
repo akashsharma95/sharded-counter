@@ -20,6 +20,8 @@ svc := s3.NewFromConfig(cfg) // any implementation of the Client interface
 counter := s3counter.New(svc, "my-bucket",
 	s3counter.WithPrefix("metrics"),
 	s3counter.WithDefaultShards(64),
+	s3counter.WithParallelism(32),           // max concurrent shard reads
+	s3counter.WithEpochCacheTTL(time.Minute), // cache epoch metadata
 )
 
 // Ensure the counter exists (idempotent).
@@ -59,6 +61,35 @@ defer compactor.Stop()
 
 You can also trigger compaction manually via `Compactor.Trigger()` (for example
 after a burst of writes) or by calling `counter.Compact` yourself.
+
+## High-throughput writes with buffering
+
+For workloads with very high write rates, use `BufferedCounter` to batch
+increments in memory before flushing to S3:
+
+```go
+buffered := s3counter.NewBuffered(
+	counter,
+	5*time.Second, // flush interval
+	1000,          // auto-flush when buffer reaches this size
+	logger,
+)
+buffered.Start()
+defer buffered.Stop(ctx)
+
+// These accumulate in memory and flush periodically
+for i := 0; i < 100000; i++ {
+	if err := buffered.IncrementBuffered(ctx, "pageviews", 1); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Force immediate flush
+buffered.Flush(ctx)
+```
+
+**Throughput gain**: 10-100x depending on workload. Best for analytics,
+event counting, and other scenarios where eventual consistency is acceptable.
 
 ## Testing
 

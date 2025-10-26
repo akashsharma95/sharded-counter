@@ -1,0 +1,75 @@
+version: 2
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  govet:
+    enable-all: true
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  misspell:
+    locale: US
+  lll:
+    line-length: 120
+  goimports:
+    local-prefixes: github.com/akashsharma95/sharded-counter
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+  funlen:
+    lines: 100
+    statements: 50
+
+linters:
+  disable-all: true
+  enable:
+    - bodyclose
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocyclo
+    - misspell
+    - goconst
+    - gocritic
+    - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+    - path: integration_test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - goconst
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - integration

@@ -1,4 +1,4 @@
-package s3counter
+package shardedcounter
 
 import (
 	"context"

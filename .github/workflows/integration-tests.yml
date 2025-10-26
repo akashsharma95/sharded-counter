@@ -1,0 +1,78 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, perf-improvements ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25.1'
+        cache: true
+
+    - name: Download dependencies
+      run: |
+        go mod download
+        go mod verify
+
+    - name: Start LocalStack
+      run: |
+        docker-compose up -d
+        echo "Waiting for LocalStack to be healthy..."
+        timeout 60 sh -c 'until docker-compose ps | grep -q "healthy"; do sleep 2; done'
+        sleep 5
+
+    - name: Show LocalStack logs
+      if: always()
+      run: docker-compose logs localstack
+
+    - name: Run unit tests
+      run: |
+        go test -v -race -coverprofile=coverage-unit.out -covermode=atomic ./... -short
+
+    - name: Run integration tests
+      run: |
+        go test -v -race -tags=integration -coverprofile=coverage-integration.out -covermode=atomic -timeout 5m ./...
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage-unit.out,./coverage-integration.out
+        flags: integration
+        name: codecov-integration
+
+    - name: Stop LocalStack
+      if: always()
+      run: docker-compose down -v
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25.1'
+        cache: true
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+

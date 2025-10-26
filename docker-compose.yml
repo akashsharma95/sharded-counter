@@ -1,0 +1,40 @@
+services:
+  localstack:
+    image: localstack/localstack:4.9.2
+    container_name: sharded-counter-localstack
+    ports:
+      - "4566:4566"            # LocalStack Gateway
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      # Core configuration
+      - SERVICES=s3
+      - DEBUG=0
+      - PERSISTENCE=0
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+      # S3 specific configuration
+      - S3_SKIP_SIGNATURE_VALIDATION=0
+      - EAGER_SERVICE_LOADING=1
+
+      # Hostname configuration for accessing from host
+      - HOSTNAME_EXTERNAL=localhost
+
+      # Disable analytics
+      - DISABLE_EVENTS=1
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - sharded-counter-network
+
+networks:
+  sharded-counter-network:
+    driver: bridge
+
+
