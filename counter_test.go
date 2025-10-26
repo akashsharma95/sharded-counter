@@ -192,15 +192,19 @@ func TestEpochCaching(t *testing.T) {
 // --- stub S3 client -------------------------------------------------------
 
 type stubS3 struct {
-	mu        sync.Mutex
 	objects   map[string]stubObject
-	revision  int64
 	readStats map[string]int
+	revision  int64
+	mu        sync.Mutex
 }
 
 type stubObject struct {
-	body []byte
-	etag string
+	body     []byte
+	revision int64
+}
+
+func stubETag(revision int64) string {
+	return fmt.Sprintf("\"rev-%d\"", revision)
 }
 
 func newStubS3() *stubS3 {
@@ -227,7 +231,7 @@ func (s *stubS3) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...fun
 	obj, ok := s.objects[key]
 
 	if v := aws.ToString(input.IfMatch); v != "" {
-		if !ok || obj.etag != v {
+		if !ok || stubETag(obj.revision) != v {
 			return nil, stubError{code: http.StatusPreconditionFailed}
 		}
 	}
@@ -239,13 +243,13 @@ func (s *stubS3) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...fun
 
 	s.revision++
 	newObj := stubObject{
-		body: body,
-		etag: fmt.Sprintf(`"rev-%d"`, s.revision),
+		body:     body,
+		revision: s.revision,
 	}
 	s.objects[key] = newObj
 
 	return &s3.PutObjectOutput{
-		ETag: aws.String(newObj.etag),
+		ETag: aws.String(stubETag(newObj.revision)),
 	}, nil
 }
 
@@ -267,7 +271,7 @@ func (s *stubS3) GetObject(_ context.Context, input *s3.GetObjectInput, _ ...fun
 
 	return &s3.GetObjectOutput{
 		Body: io.NopCloser(bytes.NewReader(obj.body)),
-		ETag: aws.String(obj.etag),
+		ETag: aws.String(stubETag(obj.revision)),
 	}, nil
 }
 
@@ -323,7 +327,7 @@ func (s *stubS3) ListObjectsV2(_ context.Context, input *s3.ListObjectsV2Input, 
 		contents = append(contents, types.Object{
 			Key:          aws.String(key),
 			LastModified: aws.Time(time.Now()),
-			ETag:         aws.String(obj.etag),
+			ETag:         aws.String(stubETag(obj.revision)),
 			Size:         aws.Int64(int64(len(obj.body))),
 		})
 	}
