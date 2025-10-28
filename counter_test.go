@@ -340,6 +340,46 @@ func (s *stubS3) ListObjectsV2(_ context.Context, input *s3.ListObjectsV2Input, 
 	}, nil
 }
 
+func TestEnsureRejectsNegativeShardCount(t *testing.T) {
+	counter := New(newStubS3(), "bucket")
+	err := counter.Ensure(context.Background(), "invalid", -4)
+	if err == nil {
+		t.Fatalf("expected error for negative shard count")
+	}
+	if !strings.Contains(err.Error(), "invalid shardCount") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBaseWithoutPrefix(t *testing.T) {
+	counter := New(newStubS3(), "bucket", WithPrefix(""))
+	if got := counter.base("plain"); got != "plain" {
+		t.Fatalf("base=%q want plain", got)
+	}
+
+	counter.cfg.Prefix = ""
+	if key := counter.keyEpoch("plain"); key != "plain/epoch.json" {
+		t.Fatalf("keyEpoch=%q want plain/epoch.json", key)
+	}
+}
+
+func TestGetEpochAppliesDefaultShardCount(t *testing.T) {
+	ctx := context.Background()
+	counter := New(newStubS3(), "bucket")
+	body := []byte(`{"epoch":2,"shardCount":0}`)
+	if err := counter.putJSON(ctx, counter.keyEpoch("defaults"), body, ""); err != nil {
+		t.Fatalf("putJSON: %v", err)
+	}
+
+	meta, _, err := counter.getEpoch(ctx, "defaults")
+	if err != nil {
+		t.Fatalf("getEpoch: %v", err)
+	}
+	if meta.ShardCount != counter.cfg.DefaultShards {
+		t.Fatalf("ShardCount=%d want default %d", meta.ShardCount, counter.cfg.DefaultShards)
+	}
+}
+
 func (s *stubS3) listKeysWithPrefix(prefix string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
