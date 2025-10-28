@@ -13,12 +13,13 @@ import (
 	"testing"
 	"time"
 
-	shardedcounter "github.com/akashsharma95/sharded-counter"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	shardedcounter "github.com/akashsharma95/sharded-counter"
 )
 
 const (
@@ -187,9 +188,9 @@ func TestIntegrationIncrement(t *testing.T) {
 
 	// Test multiple increments
 	for i := 0; i < 10; i++ {
-		_, _, err := counter.Increment(ctx, counterName, 5, nil)
-		if err != nil {
-			t.Fatalf("Increment %d failed: %v", i, err)
+		_, _, incErr := counter.Increment(ctx, counterName, 5, nil)
+		if incErr != nil {
+			t.Fatalf("Increment %d failed: %v", i, incErr)
 		}
 	}
 
@@ -235,9 +236,9 @@ func TestIntegrationConcurrentIncrements(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incrementsPerGoroutine; j++ {
-				if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
+				if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
 					errors.Add(1)
-					t.Logf("concurrent increment error: %v", err)
+					t.Logf("concurrent increment error: %v", incErr)
 				}
 			}
 		}()
@@ -283,8 +284,8 @@ func TestIntegrationGetApprox(t *testing.T) {
 	const totalIncrements = 1000
 	for i := 0; i < totalIncrements; i++ {
 		shard := i % 32
-		if _, _, err := counter.Increment(ctx, counterName, 1, &shard); err != nil {
-			t.Fatalf("Increment failed: %v", err)
+		if _, _, incErr := counter.Increment(ctx, counterName, 1, &shard); incErr != nil {
+			t.Fatalf("Increment failed: %v", incErr)
 		}
 	}
 
@@ -336,8 +337,8 @@ func TestIntegrationCompact(t *testing.T) {
 
 	// Add some increments in epoch 0
 	for i := 0; i < 100; i++ {
-		if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
-			t.Fatalf("Increment failed: %v", err)
+		if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
+			t.Fatalf("Increment failed: %v", incErr)
 		}
 	}
 
@@ -375,8 +376,8 @@ func TestIntegrationCompact(t *testing.T) {
 
 	// Add more increments in new epoch
 	for i := 0; i < 50; i++ {
-		if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
-			t.Fatalf("Increment in new epoch failed: %v", err)
+		if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
+			t.Fatalf("Increment in new epoch failed: %v", incErr)
 		}
 	}
 
@@ -417,8 +418,8 @@ func TestIntegrationMultipleCompactions(t *testing.T) {
 		// Add increments
 		incrementsThisCycle := int64(20 + cycle*10)
 		for i := int64(0); i < incrementsThisCycle; i++ {
-			if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
-				t.Fatalf("Increment in cycle %d failed: %v", cycle, err)
+			if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
+				t.Fatalf("Increment in cycle %d failed: %v", cycle, incErr)
 			}
 		}
 		expectedTotal += incrementsThisCycle
@@ -498,8 +499,8 @@ func TestIntegrationBufferedCounter(t *testing.T) {
 	t.Logf("Intermediate value (before flush): %d", intermediate)
 
 	// Explicitly flush
-	if err := buffered.Flush(ctx); err != nil {
-		t.Fatalf("Flush failed: %v", err)
+	if flushErr := buffered.Flush(ctx); flushErr != nil {
+		t.Fatalf("Flush failed: %v", flushErr)
 	}
 
 	// Give a moment for flush to complete
@@ -571,8 +572,8 @@ func TestIntegrationBufferedAutoFlush(t *testing.T) {
 	}
 
 	// Final flush to ensure everything is committed
-	if err := buffered.Flush(ctx); err != nil {
-		t.Fatalf("Flush failed: %v", err)
+	if flushErr := buffered.Flush(ctx); flushErr != nil {
+		t.Fatalf("Flush failed: %v", flushErr)
 	}
 	time.Sleep(100 * time.Millisecond)
 
@@ -606,15 +607,15 @@ func TestIntegrationNegativeIncrements(t *testing.T) {
 
 	// Add positive increments
 	for i := 0; i < 100; i++ {
-		if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
-			t.Fatalf("Positive increment failed: %v", err)
+		if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
+			t.Fatalf("Positive increment failed: %v", incErr)
 		}
 	}
 
 	// Subtract some
 	for i := 0; i < 30; i++ {
-		if _, _, err := counter.Increment(ctx, counterName, -1, nil); err != nil {
-			t.Fatalf("Negative increment failed: %v", err)
+		if _, _, incErr := counter.Increment(ctx, counterName, -1, nil); incErr != nil {
+			t.Fatalf("Negative increment failed: %v", incErr)
 		}
 	}
 
@@ -661,8 +662,8 @@ func TestIntegrationMultipleCounters(t *testing.T) {
 	// Increment each counter independently
 	for _, c := range counters {
 		for i := int64(0); i < c.expected; i++ {
-			if _, _, err := counter.Increment(ctx, c.name, 1, nil); err != nil {
-				t.Fatalf("Increment %s failed: %v", c.name, err)
+			if _, _, incErr := counter.Increment(ctx, c.name, 1, nil); incErr != nil {
+				t.Fatalf("Increment %s failed: %v", c.name, incErr)
 			}
 		}
 	}
@@ -767,8 +768,8 @@ func BenchmarkIntegrationIncrement(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if _, _, err := counter.Increment(ctx, counterName, 1, nil); err != nil {
-				b.Logf("increment error: %v", err)
+			if _, _, incErr := counter.Increment(ctx, counterName, 1, nil); incErr != nil {
+				b.Logf("increment error: %v", incErr)
 			}
 		}
 	})

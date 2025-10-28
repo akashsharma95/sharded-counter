@@ -8,15 +8,15 @@ import (
 
 // Compactor periodically runs Compact for a counter using optional heuristics.
 type Compactor struct {
-	Counter        *Counter
+	Counter   *Counter
+	logger    *log.Logger
+	triggerCh chan struct{}
+	stopCh    chan struct{}
+
 	Name           string
 	Interval       time.Duration // run at least this often (>=0). 0 disables ticker.
 	DeltaThreshold int64         // run when estimated current-epoch delta >= threshold; 0 disables.
 	SampleK        int           // shards to sample for delta estimation
-
-	logger    *log.Logger
-	triggerCh chan struct{}
-	stopCh    chan struct{}
 }
 
 // NewCompactor builds a background compactor using the provided configuration.

@@ -53,8 +53,14 @@ func (c *Counter) acquireLock(ctx context.Context, name string) error {
 	return c.putTextConditional(ctx, c.keyLock(name), body, "If-None-Match", "*")
 }
 
-func (c *Counter) releaseLock(ctx context.Context, name string) {
-	_ = c.deleteObject(ctx, c.keyLock(name))
+func (c *Counter) releaseLock(ctx context.Context, name string) error {
+	if err := c.deleteObject(ctx, c.keyLock(name)); err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Counter) putText(ctx context.Context, key string, body []byte) error {
@@ -95,7 +101,7 @@ func (c *Counter) putJSON(ctx context.Context, key string, body []byte, ifMatchE
 	return c.putTextConditional(ctx, key, body, "If-Match", ifMatchETag)
 }
 
-func (c *Counter) getText(ctx context.Context, key string) (string, string, error) {
+func (c *Counter) getText(ctx context.Context, key string) (body, etag string, err error) {
 	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(c.cfg.Bucket),
 		Key:    aws.String(key),
@@ -103,7 +109,11 @@ func (c *Counter) getText(ctx context.Context, key string) (string, string, erro
 	if err != nil {
 		return "", "", err
 	}
-	defer func() { _ = out.Body.Close() }()
+	defer func() {
+		if closeErr := out.Body.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	b, err := io.ReadAll(bufio.NewReader(out.Body))
 	if err != nil {
@@ -112,7 +122,7 @@ func (c *Counter) getText(ctx context.Context, key string) (string, string, erro
 	return string(bytes.TrimSpace(b)), aws.ToString(out.ETag), nil
 }
 
-func (c *Counter) getJSON(ctx context.Context, key string) (epochMeta, string, error) {
+func (c *Counter) getJSON(ctx context.Context, key string) (meta epochMeta, etag string, err error) {
 	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(c.cfg.Bucket),
 		Key:    aws.String(key),
@@ -120,13 +130,16 @@ func (c *Counter) getJSON(ctx context.Context, key string) (epochMeta, string, e
 	if err != nil {
 		return epochMeta{}, "", err
 	}
-	defer func() { _ = out.Body.Close() }()
+	defer func() {
+		if closeErr := out.Body.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	var m epochMeta
-	if err := json.NewDecoder(out.Body).Decode(&m); err != nil {
+	if err := json.NewDecoder(out.Body).Decode(&meta); err != nil {
 		return epochMeta{}, "", err
 	}
-	return m, aws.ToString(out.ETag), nil
+	return meta, aws.ToString(out.ETag), nil
 }
 
 func (c *Counter) deleteObject(ctx context.Context, key string) error {

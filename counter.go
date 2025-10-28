@@ -2,6 +2,7 @@ package shardedcounter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -16,17 +17,17 @@ import (
 // Counter is the main entry point for S3 sharded counters.
 // It is safe for concurrent use and cheap to reuse across logical counters.
 type Counter struct {
-	cfg Config
-	s3  Client
-
-	mu         sync.RWMutex // guards epochCache
+	s3         Client
+	cfg        *Config
 	epochCache map[string]cachedEpoch
-	shardRobin atomic.Uint64 // for lock-free round-robin shard selection
+
+	mu         sync.RWMutex  // guards epochCache
+	shardRobin atomic.Uint64 // lock-free round-robin shard selection
 }
 
 type cachedEpoch struct {
-	meta      epochMeta
 	expiresAt time.Time
+	meta      epochMeta
 }
 
 // Pool for reusing byte buffers to reduce allocations
@@ -61,7 +62,7 @@ func New(client Client, bucket string, opts ...Option) *Counter {
 	}
 	cfg.Prefix = strings.Trim(cfg.Prefix, "/")
 	c := &Counter{
-		cfg:        cfg,
+		cfg:        &cfg,
 		s3:         client,
 		epochCache: make(map[string]cachedEpoch),
 	}
@@ -133,13 +134,15 @@ func (c *Counter) Ensure(ctx context.Context, name string, shardCount int) error
 		if err := c.putJSON(ctx, c.keyEpoch(name), body, ""); err != nil {
 			return err
 		}
-		_ = c.putText(ctx, c.keyShard(name, 0, 0), []byte("0"))
+		if err := c.putText(ctx, c.keyShard(name, 0, 0), []byte("0")); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // Increment adds delta to a shard in the current epoch with an optimistic CAS loop.
-func (c *Counter) Increment(ctx context.Context, name string, delta int64, shardOverride *int) (epoch int, shard int, err error) {
+func (c *Counter) Increment(ctx context.Context, name string, delta int64, shardOverride *int) (epoch, shard int, err error) {
 	if delta == 0 {
 		return 0, 0, nil
 	}
@@ -171,7 +174,12 @@ func (c *Counter) Increment(ctx context.Context, name string, delta int64, shard
 		next := current + delta
 
 		// Use buffer pool to avoid allocations
-		bufPtr := bufferPool.Get().(*[]byte)
+		bufVal := bufferPool.Get()
+		bufPtr, ok := bufVal.(*[]byte)
+		if !ok {
+			newBuf := make([]byte, 0, 32)
+			bufPtr = &newBuf
+		}
 		buf := (*bufPtr)[:0]
 		buf = strconv.AppendInt(buf, next, 10)
 
@@ -278,10 +286,18 @@ func (c *Counter) GetApprox(ctx context.Context, name string, k int) (int64, err
 
 // Compact folds the current epoch into the base total, rotates epochs, and deletes stale shards.
 func (c *Counter) Compact(ctx context.Context, name string) (folded int64, newEpoch int, err error) {
-	if err := c.acquireLock(ctx, name); err != nil {
+	if err = c.acquireLock(ctx, name); err != nil {
 		return 0, 0, fmt.Errorf("compaction already in progress or lock failed: %w", err)
 	}
-	defer c.releaseLock(ctx, name)
+	defer func() {
+		if releaseErr := c.releaseLock(ctx, name); releaseErr != nil {
+			if err == nil {
+				err = releaseErr
+				return
+			}
+			err = errors.Join(err, releaseErr)
+		}
+	}()
 
 	meta, etag, err := c.getEpoch(ctx, name)
 	if err != nil {
@@ -293,17 +309,21 @@ func (c *Counter) Compact(ctx context.Context, name string) (folded int64, newEp
 		return 0, 0, err
 	}
 
-	if err := c.addToBase(ctx, name, delta); err != nil {
-		return 0, 0, err
+	if addErr := c.addToBase(ctx, name, delta); addErr != nil {
+		return 0, 0, addErr
 	}
 
 	newEpoch = meta.Epoch + 1
 	body := fmt.Appendf(nil, `{"epoch":%d,"shardCount":%d}`, newEpoch, N)
-	if err := c.putJSON(ctx, c.keyEpoch(name), body, etag); err != nil && !isPreconditionFailed(err) {
-		return delta, newEpoch, err
+	if putErr := c.putJSON(ctx, c.keyEpoch(name), body, etag); putErr != nil && !isPreconditionFailed(putErr) {
+		return delta, newEpoch, putErr
 	}
-	_ = c.putText(ctx, c.keyShard(name, newEpoch, 0), []byte("0"))
-	_ = c.deletePrefix(ctx, c.dirEpoch(name, meta.Epoch)+"/shards/")
+	if putErr := c.putText(ctx, c.keyShard(name, newEpoch, 0), []byte("0")); putErr != nil {
+		return delta, newEpoch, putErr
+	}
+	if delErr := c.deletePrefix(ctx, c.dirEpoch(name, meta.Epoch)+"/shards/"); delErr != nil {
+		return delta, newEpoch, delErr
+	}
 
 	// Invalidate epoch cache since we just rotated to a new epoch
 	c.invalidateEpochCache(name)
@@ -324,7 +344,12 @@ func (c *Counter) addToBase(ctx context.Context, name string, add int64) error {
 		next := parseInt64(cur) + add
 
 		// Use buffer pool to avoid allocations
-		bufPtr := bufferPool.Get().(*[]byte)
+		bufVal := bufferPool.Get()
+		bufPtr, ok := bufVal.(*[]byte)
+		if !ok {
+			newBuf := make([]byte, 0, 32)
+			bufPtr = &newBuf
+		}
 		buf := (*bufPtr)[:0]
 		buf = strconv.AppendInt(buf, next, 10)
 
@@ -457,8 +482,11 @@ func (c *Counter) sumShardIDs(ctx context.Context, name string, epoch int, ids [
 	}
 	wg.Wait()
 
-	if err := firstErr.Load(); err != nil {
-		return 0, err.(error)
+	if load := firstErr.Load(); load != nil {
+		if loadErr, ok := load.(error); ok {
+			return 0, loadErr
+		}
+		return 0, fmt.Errorf("unexpected error type %T", load)
 	}
 	return sum.Load(), nil
 }
@@ -489,7 +517,10 @@ func parseInt64(s string) int64 {
 	if s == "" {
 		return 0
 	}
-	i, _ := strconv.ParseInt(s, 10, 64)
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
 	return i
 }
 

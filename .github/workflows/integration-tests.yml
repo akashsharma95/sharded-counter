@@ -13,10 +13,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25.1'
         cache: true
@@ -26,16 +26,21 @@ jobs:
         go mod download
         go mod verify
 
+    - name: Set up Docker Compose
+      uses: docker/setup-compose-action@v1
+      with:
+        version: latest
+
     - name: Start LocalStack
       run: |
-        docker-compose up -d
+        docker compose up -d
         echo "Waiting for LocalStack to be healthy..."
-        timeout 60 sh -c 'until docker-compose ps | grep -q "healthy"; do sleep 2; done'
+        timeout 60 bash -c "until [ \"\$(docker inspect --format='{{.State.Health.Status}}' sharded-counter-localstack 2>/dev/null)\" = \"healthy\" ]; do sleep 2; done"
         sleep 5
 
     - name: Show LocalStack logs
       if: always()
-      run: docker-compose logs localstack
+      run: docker compose logs localstack
 
     - name: Run unit tests
       run: |
@@ -46,15 +51,16 @@ jobs:
         go test -v -race -tags=integration -coverprofile=coverage-integration.out -covermode=atomic -timeout 5m ./...
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         files: ./coverage-unit.out,./coverage-integration.out
         flags: integration
         name: codecov-integration
+        token: ${{ secrets.CODECOV_TOKEN }}
 
     - name: Stop LocalStack
       if: always()
-      run: docker-compose down -v
+      run: docker compose down -v
 
   lint:
     name: Lint
@@ -62,17 +68,16 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25.1'
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v8
       with:
         version: latest
         args: --timeout=5m
-

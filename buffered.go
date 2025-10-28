@@ -15,14 +15,14 @@ import (
 type BufferedCounter struct {
 	*Counter
 
-	mu      sync.Mutex
-	buffers map[string]map[int]*shardBuffer // counter name -> shard -> buffer
-
-	flushInterval time.Duration
-	maxBufferSize int64 // flush when a shard buffer reaches this size
+	logger        *log.Logger
+	buffers       map[string]map[int]*shardBuffer // counter name -> shard -> buffer
 	stopCh        chan struct{}
 	stoppedCh     chan struct{}
-	logger        *log.Logger
+	flushInterval time.Duration
+	maxBufferSize int64 // flush when a shard buffer reaches this size
+
+	mu sync.Mutex
 }
 
 type shardBuffer struct {
